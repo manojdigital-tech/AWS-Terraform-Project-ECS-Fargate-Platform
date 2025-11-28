@@ -1,15 +1,15 @@
-# AWS Terraform Infrastructure – ECS Fargate Platform
+## AWS Terraform Infrastructure – ECS Fargate Platform
 
-## Purpose
+### Purpose
 Provision a production-aligned infrastructure stack using Terraform.  
 Stack includes: VPC, ALB, ECS Fargate service, Postgres (EC2-hosted), ECR, Secrets Manager, CloudWatch metrics/logs/alarms, S3 remote state, DynamoDB locking, KMS encryption, IAM least-privilege, and CI/CD integration.
 
-## Scope
+### Scope
 Infrastructure only. Application images are provided via ECR.  
 Terraform state stored remotely. CI applies infra using a restricted assume-role.  
 Runtime stack is minimal but maintains real production patterns.
 
-## Architecture Components
+### Architecture Components
 - VPC (public subnets for demo)
 - ALB + target group
 - ECS Cluster + Fargate Service + Task Definition
@@ -21,25 +21,26 @@ Runtime stack is minimal but maintains real production patterns.
 - CloudWatch logs, metrics, dashboards, alarms
 - IAM roles: deploy role, exec role, developer read-only role, admin
 
-## Repo Structure
-docs/
-modules/
-live/aws/dev
-live/aws/prod
-ci/github-actions/
-scripts/
+### Repo Structure (planned)
+- `docs/`
+- `modules/`
+- `live/aws/dev`
+- `live/aws/prod`
+- `ci/github_actions/`
+- `scripts/`
 
-pgsql
-Copy code
+> Note: Some directories are placeholders during the documentation phase and will be filled in as code is added.
 
-## Pre-Deployment Requirements
+### Pre-Deployment Requirements
 - AWS account with administrative bootstrap access
-- Terraform >= 1.5
+- Terraform >= 1.5 (see `.terraform-version`)
 - AWS CLI configured with MFA
 - GitHub Actions OIDC or IAM user/role for CI
 - Domain + Route53 hosted zone (optional)
+- Bash shell (macOS/Linux/WSL) for running helper scripts
 
-## How to Deploy (dev)
+### How to Deploy (dev)
+```bash
 ./scripts/bootstrap-backend.sh --env dev --region us-east-1 --account-id <id>
 
 cd live/aws/dev
@@ -49,26 +50,23 @@ terraform apply plan.tfplan
 
 ALB_DNS=$(terraform output -raw alb_dns)
 curl -fsS "http://${ALB_DNS}/health"
+```
 
-shell
-Copy code
-
-## How to Destroy (dev)
+### How to Destroy (dev)
+```bash
 cd live/aws/dev
 terraform destroy -var-file=dev.tfvars -auto-approve
 ./scripts/cleanup.sh --env dev
+```
 
-markdown
-Copy code
-
-## Observability
+### Observability
 - Application logs → CloudWatch Logs  
 - ECS + ALB metrics → CloudWatch Metrics  
 - Dashboards defined in monitoring module  
 - Alarms routed to SNS
 
-## Owners
+### Owners
 - **Infra Owner:** Aashish  
-- **Security Owner:** Aashish 
-- **SRE Owner:** Aashish 
-- **CI/CD Owner:** Aashish
+- **Security Owner:** Aashish  
+- **SRE Owner:** Aashish  
+- **CI/CD Owner:** Aashish  

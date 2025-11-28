@@ -1,0 +1,70 @@
+name: Terraform Apply (dev)
+
+# This workflow is intended to be run manually (workflow_dispatch) or restricted to
+# protected branches. It downloads the previously generated Terraform plan artifact
+# and applies it using an AWS role with write permissions for the dev environment.
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply_environment:
+        description: "Environment to apply (currently only 'dev' is wired)"
+        required: true
+        default: "dev"
+
+env:
+  TF_WORKING_DIR: live/aws/dev
+
+jobs:
+  apply-dev:
+    name: Terraform apply (dev from saved plan)
+    runs-on: ubuntu-latest
+
+    # Permissions: minimal GitHub token permissions. AWS permissions are provided
+    # via OIDC + IAM role below and should be tightly scoped (apply only).
+    permissions:
+      contents: read
+      id-token: write
+
+    if: github.event.inputs.apply_environment == 'dev'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        # Reason: We need the Terraform configuration in order to run init/apply.
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.5.7
+        # Reason: Use the same Terraform version as the plan job.
+
+      - name: Configure AWS credentials (apply role)
+        uses: aws-actions/configure-aws-credentials@v4
+        # Reason: Use an IAM role with write permissions for dev (apply, create, update, delete).
+        # Least privilege: this role should be restricted to resources tagged project=infra-project, env=dev.
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME_APPLY_DEV }}
+          aws-region: ${{ secrets.AWS_REGION }}
+          role-session-name: terraform-apply-dev
+
+      - name: Download plan artifact
+        uses: actions/download-artifact@v4
+        # Reason: Reuse the exact plan file that was generated in the PR plan job.
+        with:
+          name: terraform-plan-dev
+          path: ${{ env.TF_WORKING_DIR }}
+
+      - name: Terraform init
+        # Reason: Initialize backend and providers before apply (state access, providers).
+        run: terraform -chdir=${{ env.TF_WORKING_DIR }} init -input=false
+
+      - name: Terraform apply (from saved plan)
+        # Reason: Apply the previously-reviewed plan. No -auto-approve flag means this is still non-interactive here,
+        # but the fact that the workflow is manual and protected replaces the interactive approval.
+        run: terraform -chdir=${{ env.TF_WORKING_DIR }} apply -input=false plan.tfplan
+
+      # Optional: add a notification step (Slack, email, etc.) after successful apply.
+      # This should use a minimally-scoped token or webhook secret.
+
+

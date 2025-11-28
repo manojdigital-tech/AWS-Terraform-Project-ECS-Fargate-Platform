@@ -1,0 +1,141 @@
+name: Terraform Plan (dev)
+
+# This workflow runs on pull requests and generates a Terraform plan for the dev environment.
+# It also runs validation and security tools (fmt, validate, tflint, tfsec, conftest) and
+# posts the plan as a comment on the PR. No terraform apply happens here.
+
+on:
+  pull_request:
+    branches:
+      - main
+      - dev
+    paths:
+      - '**.tf'
+      - 'modules/**'
+      - 'live/aws/dev/**'
+      - 'ci/github_actions/**'
+
+env:
+  TF_WORKING_DIR: live/aws/dev
+
+jobs:
+  plan-dev:
+    name: Terraform plan (dev)
+    runs-on: ubuntu-latest
+
+    # GitHub token permissions: minimal required.
+    permissions:
+      contents: read          # checkout repo
+      pull-requests: write    # post PR comments with plan
+      id-token: write         # needed if using OIDC to assume AWS role for Terraform backend
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        # Reason: Terraform needs access to the code in this repo.
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.5.7
+        # Reason: Ensure everyone uses the same Terraform version as documented.
+
+      - name: Configure AWS credentials (read-only for plan)
+        uses: aws-actions/configure-aws-credentials@v4
+        # Reason: Terraform needs AWS credentials to access the remote backend and read state.
+        # Least privilege: the role used here should have only read + plan permissions for dev.
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME_PLAN_DEV }}
+          aws-region: ${{ secrets.AWS_REGION }}
+          role-session-name: terraform-plan-dev
+
+      - name: Install tflint
+        # Reason: Enforce Terraform linting (style and potential issues).
+        run: |
+          curl -s https://raw.githubusercontent.com/terraform-linters/tflint/master/install_linux.sh | bash
+
+      - name: Install tfsec
+        # Reason: Static analysis for Terraform security issues.
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/aquasecurity/tfsec/master/scripts/install_linux.sh | sh -s -- -b /usr/local/bin
+
+      - name: Install Conftest (policy-as-code)
+        # Reason: Enforce custom Rego/OPA policies over the Terraform plan JSON.
+        run: |
+          curl -L https://github.com/open-policy-agent/conftest/releases/latest/download/conftest_Linux_x86_64.tar.gz -o conftest.tar.gz
+          tar xzf conftest.tar.gz
+          sudo mv conftest /usr/local/bin/
+
+      - name: Terraform fmt (check only)
+        # Reason: Enforce consistent formatting; fails PR if fmt is not clean.
+        run: terraform -chdir=${{ env.TF_WORKING_DIR }} fmt -check -recursive
+
+      - name: Terraform init
+        # Reason: Initialize backend and provider plugins.
+        run: terraform -chdir=${{ env.TF_WORKING_DIR }} init -input=false
+
+      - name: Terraform validate
+        # Reason: Validate configuration is syntactically valid and internally consistent.
+        run: terraform -chdir=${{ env.TF_WORKING_DIR }} validate
+
+      - name: Run tflint
+        # Reason: Catch common Terraform issues (deprecated syntax, best practices).
+        run: tflint --chdir ${{ env.TF_WORKING_DIR }}
+
+      - name: Run tfsec
+        # Reason: Catch security misconfigurations (open SGs, unencrypted resources, etc.).
+        # It will also respect any future tfsec-ignore.hcl if added with justification.
+        run: tfsec ${{ env.TF_WORKING_DIR }}
+
+      - name: Terraform plan
+        # Reason: Generate a plan file that can be inspected and applied later.
+        run: |
+          terraform -chdir=${{ env.TF_WORKING_DIR }} plan -out=plan.tfplan
+          terraform -chdir=${{ env.TF_WORKING_DIR }} show -json plan.tfplan > plan.json
+
+      - name: Run Conftest (policy-as-code)
+        # Reason: Enforce custom security policies (no public S3, no IAM wildcards, etc.).
+        run: conftest test ${{ env.TF_WORKING_DIR }}/plan.json -p modules/security/policies/conftest
+
+      - name: Save human-readable plan
+        # Reason: Produce a text version of the plan for PR comments.
+        run: terraform -chdir=${{ env.TF_WORKING_DIR }} show -no-color plan.tfplan > plan.txt
+
+      - name: Upload plan artifacts
+        uses: actions/upload-artifact@v4
+        # Reason: Make the plan file and text available to the apply workflow and for debugging.
+        with:
+          name: terraform-plan-dev
+          path: |
+            ${{ env.TF_WORKING_DIR }}/plan.tfplan
+            ${{ env.TF_WORKING_DIR }}/plan.txt
+
+      - name: Comment plan on PR
+        # Reason: Surface the plan directly on the PR so reviewers can see what will change.
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const planPath = path.join(process.env.TF_WORKING_DIR, 'plan.txt');
+            const plan = fs.readFileSync(planPath, 'utf8');
+
+            const truncatedPlan = plan.length > 60000 ? plan.slice(0, 60000) + '\n\n...[truncated]...' : plan;
+
+            const body = [
+              'Terraform plan for **dev** environment:',
+              '',
+              '```hcl',
+              truncatedPlan,
+              '```'
+            ].join('\n');
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body
+            });
+
+

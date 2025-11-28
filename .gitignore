@@ -1,0 +1,30 @@
+# Terraform local files and state
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Plan files
+*.tfplan
+
+# IDE/editor artifacts
+.vscode/
+.idea/
+*.iml
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# Logs and temp files
+logs/
+*.log
+tmp/
+
+

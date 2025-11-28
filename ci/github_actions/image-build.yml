@@ -1,0 +1,104 @@
+name: Image Build and Push (dev)
+
+# This workflow builds the application Docker image, scans it, generates an SBOM,
+# and pushes it to ECR. It can then optionally trigger an infra apply workflow or
+# update a variable store with the new image tag.
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+
+env:
+  AWS_REGION: ${{ secrets.AWS_REGION }}
+  # ECR repository name (without account/region). Example: infra-project-dev-app
+  ECR_REPOSITORY: infra-project-dev-app
+  # Image tag: use short SHA for traceability.
+  IMAGE_TAG: ${{ github.sha }}
+
+jobs:
+  build-and-push:
+    name: Build, scan, and push image to ECR
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write        # required for OIDC-based assume role
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        # Reason: Docker build context is this repo (sample app Dockerfile lives here or in a subdir).
+
+      - name: Configure AWS credentials (image build role)
+        uses: aws-actions/configure-aws-credentials@v4
+        # Reason: Use an IAM role that can push to ECR and (optionally) trigger ECS updates.
+        # Least privilege: grant only ecr:PutImage, ecr:CompleteLayerUpload, ecr:BatchCheckLayerAvailability,
+        # and any ECS/ECR describe permissions needed by this workflow.
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME_IMAGE_BUILD_DEV }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: image-build-dev
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+        # Reason: Obtain a short-lived Docker login token for the target ECR registry.
+
+      - name: Build Docker image
+        # Reason: Build the application container; adjust Dockerfile path as needed.
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          IMAGE_URI=${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}
+          echo "Building image ${IMAGE_URI}"
+          docker build -t "${IMAGE_URI}" .
+          echo "IMAGE_URI=${IMAGE_URI}" >> $GITHUB_ENV
+
+      - name: Scan image with Trivy
+        # Reason: Container vulnerability scan before pushing to ECR.
+        uses: aquasecurity/trivy-action@0.18.0
+        with:
+          image-ref: ${{ env.IMAGE_URI }}
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+
+      - name: Generate SBOM with Trivy (CycloneDX)
+        # Reason: Produce a software bill of materials for supply chain transparency.
+        run: |
+          trivy image --format cyclonedx --output sbom.cdx.json "${IMAGE_URI}"
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        # Reason: Persist SBOM for auditing and future analysis.
+        with:
+          name: sbom-${{ github.sha }}
+          path: sbom.cdx.json
+
+      - name: Push image to ECR
+        # Reason: Only push after successful scan and SBOM generation.
+        run: |
+          docker push "${IMAGE_URI}"
+
+      # Optional: Update infra with new image tag (example using workflow_dispatch).
+      # This uses the GitHub token to trigger the Terraform apply workflow with an input
+      # that could be wired to a tfvar or variable store.
+      - name: Trigger infra apply workflow (optional)
+        if: github.ref == 'refs/heads/dev'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "New image ${IMAGE_URI} built and pushed. You can now wire this into Terraform."
+          # Example (commented out) to trigger apply.yml with workflow_dispatch:
+          # curl -X POST \
+          #   -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+          #   -H "Accept: application/vnd.github+json" \
+          #   https://api.github.com/repos/${{ github.repository }}/actions/workflows/apply.yml/dispatches \
+          #   -d '{"ref":"dev","inputs":{"apply_environment":"dev"}}'
+          #
+          # Least privilege: GITHUB_TOKEN has repo-scoped permissions only; avoid using a PAT if possible.
+
+
