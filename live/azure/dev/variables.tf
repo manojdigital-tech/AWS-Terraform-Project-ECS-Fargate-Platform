@@ -1,6 +1,12 @@
 // variables.tf
 // Placeholder variables for Azure dev environment.
 
+variable "project" {
+  description = "Project name used for naming and tagging."
+  type        = string
+  default     = "infra-project"
+}
+
 variable "environment" {
   description = "Environment name."
   type        = string
@@ -12,5 +18,4 @@ variable "location" {
   type        = string
   default     = "eastus"
 }
-
 

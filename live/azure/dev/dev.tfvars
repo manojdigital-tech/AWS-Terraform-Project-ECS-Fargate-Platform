@@ -3,5 +3,5 @@
 
 environment = "dev"
 location    = "eastus"
-
+project     = "infra-project"
 

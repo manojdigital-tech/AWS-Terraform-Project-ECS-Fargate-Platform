@@ -1,0 +1,51 @@
+name: Terraform Apply (azure dev)
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply_environment:
+        description: "Environment to apply (currently only 'azure-dev' is wired)"
+        required: true
+        default: "azure-dev"
+
+env:
+  TF_WORKING_DIR: live/azure/dev
+
+jobs:
+  apply-azure-dev:
+    name: Terraform apply (azure dev from saved plan)
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      id-token: write
+
+    if: github.event.inputs.apply_environment == 'azure-dev'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.5.7
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Download plan artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-plan-azure-dev
+          path: ${{ env.TF_WORKING_DIR }}
+
+      - name: Terraform init
+        run: terraform -chdir=${{ env.TF_WORKING_DIR }} init -input=false
+
+      - name: Terraform apply (from saved plan)
+        run: terraform -chdir=${{ env.TF_WORKING_DIR }} apply -input=false plan.tfplan
+
+
