@@ -5,7 +5,7 @@ output "resource_group_name" {
 
 output "app_service_plan_id" {
   description = "ID of the App Service plan."
-  value       = azurerm_app_service_plan.this.id
+  value       = azurerm_service_plan.this.id
 }
 
 output "web_app_name" {
