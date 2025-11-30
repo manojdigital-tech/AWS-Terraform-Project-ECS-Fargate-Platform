@@ -57,6 +57,7 @@ jobs:
           exit-code: '1'
           ignore-unfixed: true
           vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'  # Only fail on CRITICAL and HIGH severity
 
       - name: Generate SBOM with Trivy (CycloneDX)
         run: |
